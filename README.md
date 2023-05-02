@@ -55,4 +55,4 @@ If you find this project helpful and would like to support its development, cons
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](https://github.com/latetedemelon/viscal/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](https://github.com/latetedemelon/lunchmoney-to-gsheets/blob/main/LICENSE) file for details.
