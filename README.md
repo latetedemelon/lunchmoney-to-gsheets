@@ -1,4 +1,4 @@
-# lunchmoney-to-gsheets
+# Lunchmoney -> Google Sheets
 
 1) Open a New Sheet
 2) Extension -> Apps Script
