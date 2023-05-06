@@ -350,6 +350,112 @@ function refreshRecurringExpenses() {
   updateSheet(sheetName, recurringexpenses, getConfigValue('API_Key'));
 }
 
+function getTotalIncomeAndExpenses(startDate, endDate) {
+  const transactionsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Lunchmoney /transactions');
+  const categoriesSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Lunchmoney /categories');
+  const transactions = transactionsSheet.getDataRange().getValues();
+  const categories = categoriesSheet.getDataRange().getValues();
+
+  const categoryIdToIncome = categories.reduce((acc, row) => {
+    acc[row[0]] = row[3];
+    return acc;
+  }, {});
+
+  let totalIncome = 0;
+  let totalExpenses = 0;
+
+  transactions.slice(1).forEach(row => {
+    const date = new Date(row[0]);
+    if (date >= startDate && date <= endDate) {
+      const amount = row[6];
+      const isIncome = categoryIdToIncome[row[5]];
+      if (isIncome) {
+        totalIncome += amount;
+      } else {
+        totalExpenses += amount;
+      }
+    }
+  });
+
+  return { totalIncome, totalExpenses };
+}
+
+function getTotalBudgetAndSpend(startDate, endDate) {
+  const budgetsData = budgets(getConfigValue('API_Key'));
+  let totalBudget = 0;
+  let totalSpend = 0;
+
+  Object.entries(budgetsData).forEach(([date, data]) => {
+    const budgetDate = new Date(date);
+    if (budgetDate >= startDate && budgetDate <= endDate) {
+      totalBudget += data.budget_to_base;
+      totalSpend += data.spending_to_base;
+    }
+  });
+
+  return { totalBudget, totalSpend };
+}
+
+function getBudgetAndSpendByCategory(startDate, endDate) {
+  const budgetsData = budgets(getConfigValue('API_Key'));
+  const result = {};
+
+  Object.entries(budgetsData).forEach(([date, data]) => {
+    const budgetDate = new Date(date);
+    if (budgetDate >= startDate && budgetDate <= endDate) {
+      const categoryId = data.category_id;
+      if (!result[categoryId]) {
+        result[categoryId] = { totalBudget: 0, totalSpend: 0 };
+      }
+      result[categoryId].totalBudget += data.budget_to_base;
+      result[categoryId].totalSpend += data.spending_to_base;
+    }
+  });
+
+  return result;
+}
+
+function getPlannedAndActualSpend(startDate, endDate) {
+  const transactionsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Lunchmoney /transactions');
+  const transactions = transactionsSheet.getDataRange().getValues();
+  let plannedSpend = 0;
+  let actualSpend = 0;
+
+  let currentStartDate = new Date(startDate);
+  while (currentStartDate <= endDate) {
+    const recurringItems = recurringexpenses(getConfigValue('API_Key'), currentStartDate);
+    recurringItems.forEach(item => {
+      if (!item.type) {
+        plannedSpend += item.amount;
+
+        const transactionId = item.transaction_id;
+        const transaction = transactions.find(row => row[1] === transactionId);
+        if (transaction) {
+          actualSpend += transaction[6];
+        }
+      }
+    });
+    currentStartDate.setMonth(currentStartDate.getMonth() + 1);
+  }
+  return { plannedSpend, actualSpend };
+}
+
+function testReport() {
+  const startDate = new Date('2023-01-01');
+  const endDate = new Date('2023-04-30');
+
+  const incomeAndExpenses = getTotalIncomeAndExpenses(startDate, endDate);
+  const budgetAndSpend = getTotalBudgetAndSpend(startDate, endDate);
+  const budgetAndSpendByCategory = getBudgetAndSpendByCategory(startDate, endDate);
+  const plannedAndActualSpend = getPlannedAndActualSpend(startDate, endDate);
+
+  console.log('Total Income and Expenses:', incomeAndExpenses);
+  console.log('Total Budget and Spend:', budgetAndSpend);
+  console.log('Budget and Spend by Category:', budgetAndSpendByCategory);
+  console.log('Planned and Actual Spend for Recurring Items:', plannedAndActualSpend);
+}
+
+
 function refreshAllEndpoints() {
   refreshCategories();
   refreshTransactions();
