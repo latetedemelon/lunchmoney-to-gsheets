@@ -19,8 +19,6 @@
 //OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 //SOFTWARE.
 
-
-
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
   const menu = ui.createMenu('Lunchmoney');
@@ -37,7 +35,23 @@ function onOpen() {
   menu.addItem('Refresh Crypto', 'refreshCrypto');
   menu.addItem('Refresh Recurring Expenses', 'refreshRecurringExpenses');
   menu.addToUi();
+  
+  hideOtherSheets(); // Add this line to call the hideOtherSheets function
 }
+
+// Add this new function to hide other sheets
+function hideOtherSheets() {
+  const visibleSheets = ['transactions', 'budget', 'configuration'];
+  const sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets();
+
+  sheets.forEach(sheet => {
+    const sheetName = sheet.getName().toLowerCase();
+    if (!visibleSheets.includes(sheetName)) {
+      sheet.hideSheet();
+    }
+  });
+}
+
 
 // Base URL for Lunch Money API
 const BASE_URL = 'https://dev.lunchmoney.app/v1';
