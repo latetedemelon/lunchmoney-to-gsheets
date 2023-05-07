@@ -56,11 +56,11 @@ function hideOtherSheets() {
 // Base URL for Lunch Money API
 const BASE_URL = 'https://dev.lunchmoney.app/v1';
 const CONFIG_SHEET_NAME = "Lunchmoney Configuration";
-const API_KEY = 'abcdefghijklmnopqrstuvwxyz';
-const TRANSACTION_START_DATE = '2022-01-01'
-const TRANSACTION_END_DATE = '2023-01-01'
-const BUDGETS_START_DATE = '2022-01-01'
-const BUDGETS_END_DATE = '2023-01-01'
+const API_KEY = '604d25abd1c770cdb9ddf8f8d8ddd2ef462649d1dab3074cc9';
+const TRANSACTION_START_DATE = '2023-01-01'
+const TRANSACTION_END_DATE = '2023-04-30'
+const BUDGETS_START_DATE = '2023-01-01'
+const BUDGETS_END_DATE = '2023-04-30'
 const RECURRING_START_DATE = '2023-01-01'
 
 function createConfigSheetIfNotExists() {
@@ -161,7 +161,7 @@ function htmlDecode(input) {
   });
 }
 
-function updateSheet(sheetName, fetchDataFunction, apiKey) {
+function updateSheet(sheetName, fetchDataFunction, apiKey, startDate, endDate) {
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName(sheetName);
@@ -175,7 +175,7 @@ function updateSheet(sheetName, fetchDataFunction, apiKey) {
     sheet.clearContents();
     
     Logger.log(`Fetching data for "${sheetName}" sheet.`);
-    const data = fetchDataFunction(apiKey);
+    const data = fetchDataFunction(apiKey, startDate, endDate);
     if (!data || data.length === 0) {
       Logger.log(`Error: No data found for "${sheetName}" sheet.`);
       return;
@@ -267,18 +267,18 @@ function categories(apiKey) {
   return apiRequest('/categories', 'GET', null, apiKey);
 }
 
-function transactions(apiKey) {
+function transactions(apiKey, startDate, endDate) {
   const params = {
-    start_date: TRANSACTION_START_DATE,
-    end_date: TRANSACTION_END_DATE,
+    start_date: startDate,
+    end_date: endDate,
   };
   return apiRequest('/transactions', 'GET', null, apiKey, params);
 }
 
-function budgets(apiKey) {
+function budgets(apiKey, startDate, endDate) {
   const params = {
-    start_date: BUDGETS_START_DATE,
-    end_date: BUDGETS_END_DATE,
+    start_date: startDate,
+    end_date: endDate,
   };
   return apiRequest('/budgets', 'GET', null, apiKey, params);
 }
@@ -311,13 +311,13 @@ function refreshCategories() {
 function refreshTransactions() {
   const sheetName = 'Lunchmoney /transactions';
   createSheetIfNotExists(sheetName);
-  updateSheet(sheetName, transactions, getConfigValue('API_Key'));
+  updateSheet(sheetName, transactions, getConfigValue('API_Key'), TRANSACTION_START_DATE, TRANSACTION_END_DATE);
 }
 
 function refreshBudgets() {
   const sheetName = 'Lunchmoney /budgets';
   createSheetIfNotExists(sheetName);
-  updateSheet(sheetName, budgets, getConfigValue('API_Key'));
+  updateSheet(sheetName, budgets, getConfigValue('API_Key'), BUDGETS_START_DATE, BUDGETS_END_DATE);
 }
 
 function refreshTags() {
@@ -350,110 +350,337 @@ function refreshRecurringExpenses() {
   updateSheet(sheetName, recurringexpenses, getConfigValue('API_Key'));
 }
 
-function getTotalIncomeAndExpenses(startDate, endDate) {
-  const transactionsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Lunchmoney /transactions');
-  const categoriesSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Lunchmoney /categories');
-  const transactions = transactionsSheet.getDataRange().getValues();
-  const categories = categoriesSheet.getDataRange().getValues();
 
-  const categoryIdToIncome = categories.reduce((acc, row) => {
-    acc[row[0]] = row[3];
-    return acc;
-  }, {});
 
+
+function getExpensesForCategory(transactions, categoryId, startDate, endDate) {
+  let totalExpenses = 0;
+
+  transactions.forEach(transaction => {
+    const transactionDate = new Date(transaction.date);
+
+    if (transaction.category_id === categoryId && transactionDate >= startDate && transactionDate <= endDate) {
+      totalExpenses += transaction.to_base;
+    }
+  });
+
+  return totalExpenses.toFixed(2);
+}
+
+function getBudgetForCategory(budgets, categoryId, startDate, endDate) {
+  let totalBudget = 0;
+
+  budgets.forEach(budget => {
+    if (budget.category_id === categoryId) {
+      const dataKeys = Object.keys(budget.data);
+      dataKeys.forEach(date => {
+        const budgetDate = new Date(date);
+
+        if (budgetDate >= startDate && budgetDate <= endDate) {
+          totalBudget += budget.data[date].budget_to_base;
+        }
+      });
+    }
+  });
+
+  return totalBudget.toFixed(2);
+}
+
+function getCategoryNameById(categories, categoryId) {
+  const category = categories.find(category => category.id === categoryId);
+
+  return category ? category.name : '';
+}
+
+function compareExpensesWithBudget(transactions, categories, budgets, startDate, endDate) {
+  const results = [];
+
+  categories.forEach(category => {
+    const categoryId = category.id;
+    const categoryName = getCategoryNameById(categories, categoryId);
+    const totalExpenses = getExpensesForCategory(transactions, categoryId, startDate, endDate);
+    const totalBudget = getBudgetForCategory(budgets, categoryId, startDate, endDate);
+
+    results.push({
+      category_id: categoryId,
+      category_name: categoryName,
+      total_expenses: totalExpenses,
+      total_budget: totalBudget,
+      difference: (totalExpenses - totalBudget).toFixed(2)
+    });
+  });
+
+  return results;
+}
+
+
+function isDateWithinRange(date, startDate, endDate) {
+  return date >= startDate && date <= endDate;
+}
+
+
+
+async function fetchTransactions(apiKey, startDate, endDate) {
+  return await transactions(apiKey, startDate, endDate);
+}
+
+async function fetchCategories(apiKey) {
+  return await categories(apiKey);
+}
+
+async function fetchBudgets(apiKey, startDate, endDate) {
+  return await budgets(apiKey, startDate, endDate);
+}
+
+async function fetchRecurringExpenses(apiKey, startDate, endDate) {
+  return await recurringexpenses(apiKey, startDate, endDate);
+}
+
+
+
+async function getTotalIncomeAndExpenses(apiKey, startDate, endDate) {
+  const transactions = await fetchTransactions(apiKey, startDate, endDate);
+  const categories = await fetchCategories(apiKey);
   let totalIncome = 0;
   let totalExpenses = 0;
 
-  transactions.slice(1).forEach(row => {
-    const date = new Date(row[0]);
-    if (date >= startDate && date <= endDate) {
-      const amount = row[6];
-      const isIncome = categoryIdToIncome[row[5]];
-      if (isIncome) {
-        totalIncome += amount;
-      } else {
-        totalExpenses += amount;
-      }
-    }
-  });
+  // Convert startDate and endDate to Date objects
+  startDate = new Date(startDate);
+  endDate = new Date(endDate);
 
-  return { totalIncome, totalExpenses };
-}
+  // Helper function to find category by its ID
+  function findCategoryById(categoryId) {
+    return categories.find(category => category.id === categoryId);
+  }
 
-function getTotalBudgetAndSpend(startDate, endDate) {
-  const budgetsData = budgets(getConfigValue('API_Key'));
-  let totalBudget = 0;
-  let totalSpend = 0;
+  // Helper function to compare dates without time components
+  function isDateWithinRange(date, startDate, endDate) {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const day = date.getDate();
 
-  Object.entries(budgetsData).forEach(([date, data]) => {
-    const budgetDate = new Date(date);
-    if (budgetDate >= startDate && budgetDate <= endDate) {
-      totalBudget += data.budget_to_base;
-      totalSpend += data.spending_to_base;
-    }
-  });
+    const startYear = startDate.getFullYear();
+    const startMonth = startDate.getMonth();
+    const startDay = startDate.getDate();
 
-  return { totalBudget, totalSpend };
-}
+    const endYear = endDate.getFullYear();
+    const endMonth = endDate.getMonth();
+    const endDay = endDate.getDate();
 
-function getBudgetAndSpendByCategory(startDate, endDate) {
-  const budgetsData = budgets(getConfigValue('API_Key'));
-  const result = {};
+    return (
+      (year > startYear || (year === startYear && (month > startMonth || (month === startMonth && day >= startDay)))) &&
+      (year < endYear || (year === endYear && (month < endMonth || (month === endMonth && day <= endDay))))
+    );
+  }
 
-  Object.entries(budgetsData).forEach(([date, data]) => {
-    const budgetDate = new Date(date);
-    if (budgetDate >= startDate && budgetDate <= endDate) {
-      const categoryId = data.category_id;
-      if (!result[categoryId]) {
-        result[categoryId] = { totalBudget: 0, totalSpend: 0 };
-      }
-      result[categoryId].totalBudget += data.budget_to_base;
-      result[categoryId].totalSpend += data.spending_to_base;
-    }
-  });
+  transactions.forEach(transaction => {
+    const transactionDate = new Date(transaction.date);
 
-  return result;
-}
+    if (isDateWithinRange(transactionDate, startDate, endDate)) {
+      const category = findCategoryById(transaction.category_id);
 
-function getPlannedAndActualSpend(startDate, endDate) {
-  const transactionsSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Lunchmoney /transactions');
-  const transactions = transactionsSheet.getDataRange().getValues();
-  let plannedSpend = 0;
-  let actualSpend = 0;
-
-  let currentStartDate = new Date(startDate);
-  while (currentStartDate <= endDate) {
-    const recurringItems = recurringexpenses(getConfigValue('API_Key'), currentStartDate);
-    recurringItems.forEach(item => {
-      if (!item.type) {
-        plannedSpend += item.amount;
-
-        const transactionId = item.transaction_id;
-        const transaction = transactions.find(row => row[1] === transactionId);
-        if (transaction) {
-          actualSpend += transaction[6];
+      if (category && !category.exclude_from_budget) {
+        if (category.is_income) {
+          totalIncome += transaction.to_base;
+        } else {
+          totalExpenses += transaction.to_base;
         }
       }
-    });
-    currentStartDate.setMonth(currentStartDate.getMonth() + 1);
+    }
+  });
+
+  return {
+    total_income: totalIncome.toFixed(2),
+    total_expenses: totalExpenses.toFixed(2),
+  };
+}
+
+
+
+
+
+async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
+  const budgets = await fetchBudgets(apiKey, startDate, endDate);
+  const transactions = await fetchTransactions(apiKey, startDate, endDate);
+
+  let totalBudget = 0;
+  let totalSpend = 0;
+  let totalTransactionSpend = 0;
+
+  const excludedCategories = [239188, 127507, 239190, 126309, 211808, 210116, 127500, 138568, 127506];
+
+  startDate = new Date(startDate);
+  endDate = new Date(endDate);
+
+  startDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  endDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+
+  const monthsInRange = [];
+
+  for (
+    let currentDate = new Date(startDate);
+    currentDate <= endDate;
+    currentDate.setMonth(currentDate.getMonth() + 1)
+  ) {
+    if (currentDate <= endDate) {
+      monthsInRange.push(`${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-01`);
+    }
   }
-  return { plannedSpend, actualSpend };
+
+  budgets.forEach(budget => {
+    const budgetData = budget.data;
+
+    if (budget.is_group !== true && !excludedCategories.includes(budget.category_id)) {
+      for (const date in budgetData) {
+        if (monthsInRange.includes(date)) {
+          totalBudget += parseFloat(budgetData[date].budget_to_base || 0);
+          totalSpend += parseFloat(budgetData[date].spending_to_base || 0);
+        }
+      }
+    }
+  });
+
+  transactions.forEach(transaction => {
+    const transactionDate = new Date(transaction.date);
+    if (
+      transactionDate >= startDate &&
+      transactionDate <= endDate &&
+      transaction.category_id &&
+      transaction.is_group !== true &&
+      !excludedCategories.includes(transaction.category_id)
+    ) {
+      totalTransactionSpend += transaction.to_base;
+    }
+  });
+
+  return {
+    total_budget: totalBudget.toFixed(2),
+    total_spend: totalSpend.toFixed(2),
+    total_transaction_spend: totalTransactionSpend.toFixed(2),
+  };
 }
 
-function testReport() {
-  const startDate = new Date('2023-01-01');
-  const endDate = new Date('2023-04-30');
 
-  const incomeAndExpenses = getTotalIncomeAndExpenses(startDate, endDate);
-  const budgetAndSpend = getTotalBudgetAndSpend(startDate, endDate);
-  const budgetAndSpendByCategory = getBudgetAndSpendByCategory(startDate, endDate);
-  const plannedAndActualSpend = getPlannedAndActualSpend(startDate, endDate);
+async function getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate) {
+  console.log('Fetching budgets...');
+  const budgets = await fetchBudgets(apiKey, startDate, endDate);
+  console.log('Fetching transactions...');
+  const transactions = await fetchTransactions(apiKey, startDate, endDate);
 
-  console.log('Total Income and Expenses:', incomeAndExpenses);
-  console.log('Total Budget and Spend:', budgetAndSpend);
-  console.log('Budget and Spend by Category:', budgetAndSpendByCategory);
-  console.log('Planned and Actual Spend for Recurring Items:', plannedAndActualSpend);
+  const includedCategory = 126299;
+
+  startDate = new Date(startDate);
+  endDate = new Date(endDate);
+
+  startDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  endDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+
+  const monthsInRange = [];
+
+  for (
+    let currentDate = new Date(startDate);
+    currentDate.setMonth(currentDate.getMonth() + 1);
+  ) {
+    if (currentDate <= endDate) {
+      monthsInRange.push(`${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-01`);
+    }
+  }
+
+  console.log('Months in range:', monthsInRange);
+
+  const categoriesData = {};
+
+  console.log('Processing budgets...');
+  budgets.forEach(budget => {
+    const budgetData = budget.data;
+
+    if (budget.is_group !== true && budget.category_id === includedCategory) {
+      console.log(`Processing budget for category ${budget.category_name} (${budget.category_id})`);
+
+      categoriesData[budget.category_id] = {
+        category_name: budget.category_name,
+        budget: 0,
+        spend: 0,
+        transactions: 0,
+      };
+
+      for (const date in budgetData) {
+        if (monthsInRange.includes(date)) {
+          categoriesData[budget.category_id].budget += parseFloat(budgetData[date].budget_to_base || 0);
+          categoriesData[budget.category_id].spend += parseFloat(budgetData[date].spending_to_base || 0);
+        }
+      }
+      console.log(`Budget and spend for category ${budget.category_name}:`, categoriesData[budget.category_id]);
+    }
+  });
+
+  console.log('Processing transactions...');
+  transactions.forEach(transaction => {
+    const transactionDate = new Date(transaction.date);
+    if (
+      transactionDate >= startDate &&
+      transactionDate <= endDate &&
+      transaction.category_id &&
+      transaction.is_group !== true &&
+      transaction.category_id === includedCategory
+    ) {
+      //console.log(`Processing transaction for category ${transaction.category_id}`);
+
+      if (categoriesData[transaction.category_id]) {
+        categoriesData[transaction.category_id].transactions += transaction.to_base;
+      } else {
+        categoriesData[transaction.category_id] = {
+          category_name: 'Unknown',
+          budget: 0,
+          spend: 0,
+          transactions: transaction.to_base,
+        };
+      }
+    }
+  });
+
+  console.log('Final categories data:', categoriesData);
+  return categoriesData;
 }
+
+
+
+
+
+
+async function testReport() {
+  try {
+    console.log("Starting test report...");
+    const apiKey = getConfigValue('API_Key');
+    const startDate = '2023-01-01';
+    const endDate = '2023-04-30';
+
+    // Get total income and expenses
+    console.log("Getting total income and expenses...");
+    const incomeAndExpenses = await getTotalIncomeAndExpenses(apiKey, startDate, endDate);
+    console.log("Total income and expenses retrieved successfully:", incomeAndExpenses);
+
+    // Get total budget and spend
+    console.log("Getting total budget and spend...");
+    const budgetAndSpend = await getTotalBudgetAndSpend(apiKey, startDate, endDate);
+    console.log("Total budget and spend retrieved successfully:", budgetAndSpend);
+
+    // Get budget and spend by category
+    console.log("Getting budget and spend by category...");
+    const budgetAndSpendByCategory = await getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate);
+    console.log("Budget and spend by category retrieved successfully:", budgetAndSpendByCategory);
+
+    // Get planned and actual spend
+    //console.log("Getting planned and actual spend...");
+    // const plannedAndActualSpend = await getPlannedAndActualSpend(apiKey, startDate, endDate);
+    //console.log("Planned and actual spend retrieved successfully:", plannedAndActualSpend);
+
+  } catch (error) {
+    console.error("An error occurred during test report execution:", error);
+    console.log("Please check the logs for more information.");
+  }
+}
+
 
 
 function refreshAllEndpoints() {
