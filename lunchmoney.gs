@@ -291,9 +291,9 @@ function crypto(apiKey) {
   return apiRequest('/crypto', 'GET', null, apiKey);
 }
 
-function recurringexpenses(apiKey) {
+function recurringexpenses(apiKey, startDate) {
   const params = {
-    start_date: RECURRING_START_DATE,
+    start_date: startDate,
   };
   return apiRequest('/recurring_expenses', 'GET', null, apiKey, params);
 }
@@ -347,7 +347,7 @@ function refreshCrypto() {
 function refreshRecurringExpenses() {
   const sheetName = 'Lunchmoney /recurring_expenses';
   createSheetIfNotExists(sheetName);
-  updateSheet(sheetName, recurringexpenses, getConfigValue('API_Key'));
+  updateSheet(sheetName, recurringexpenses, getConfigValue('API_Key'), RECURRING_START_DATE);
 }
 
 
@@ -514,20 +514,22 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
       totalBudget: 0,
       totalSpend: 0,
       totalTransactions: 0,
-      totalRecurringTransactions: 0,
+      totalExpectedRecurring: 0,
+      totalRecurring: 0,
     },
     expenses: {
       totalBudget: 0,
       totalSpend: 0,
       totalTransactions: 0,
-      totalRecurringTransactions: 0,
+      totalExpectedRecurring: 0,
+      totalRecurring: 0,
     },
   };
 
   budgets.forEach(budget => {
     const budgetData = budget.data;
 
-    if (budget.is_group !== true && budget.exclude_from_budget !== true) {
+    if (budget.is_group !== true && budget.exclude_from_budget !== true && budget.category_id !== 126308) {
       for (const date in budgetData) {
         if (monthsInRange.includes(date)) {
           if (budget.is_income) {
@@ -546,23 +548,53 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
     const transactionDate = new Date(transaction.date);
 
     if (transactionDate >= new Date(startDate) && transactionDate <= new Date(endDate)) {
-      const category = budgets.find(budget => budget.category_id === transaction.category_id);
+      const budget = budgets.find(budget => budget.category_id === transaction.category_id && transaction.category_id !== 126308);
 
-      if (category && category.is_group !== true && category.exclude_from_budget !== true) {
-        if (category.is_income) {
+      if (budget && budget.is_group !== true && budget.exclude_from_budget !== true) {
+        if (budget.is_income) {
          result.income.totalTransactions += parseFloat(transaction.amount);
           if (transaction.recurring_id) {
-            result.income.totalRecurringTransactions += parseFloat(transaction.amount);
+            result.income.totalRecurring += parseFloat(transaction.amount);
           }
         } else {
           result.expenses.totalTransactions += parseFloat(transaction.amount);
           if (transaction.recurring_id) {
-            result.expenses.totalRecurringTransactions += parseFloat(transaction.amount);
+            result.expenses.totalRecurring += parseFloat(transaction.amount);
           }
         }
       }
     }
   });
+
+  const recurringTransactions = [];
+  for (const date of monthsInRange) {
+    const expensesForMonth = await recurringexpenses(apiKey, date);
+    if (expensesForMonth) {
+      recurringTransactions.push(...expensesForMonth);
+    }
+  }
+
+  recurringTransactions.forEach(recurringTransaction => {
+    const budget = budgets.find(budget => budget.category_id === recurringTransaction.category_id && recurringTransaction.category_id !== 126308);
+
+    if (budget && budget.is_group !== true && budget.exclude_from_budget !== true) {
+      const amount = parseFloat(recurringTransaction.amount);
+      const cadence = recurringTransaction.cadence;
+      const monthlyMultiplier = getCadenceMonthlyMultiplier(cadence);
+      const monthlyAmount = amount * monthlyMultiplier;
+      console.log(monthlyAmount);
+
+      if (budget.is_income) {
+        result.income.totalExpectedRecurring += monthlyAmount;
+      } else {
+        result.expenses.totalExpectedRecurring += monthlyAmount;
+      }
+    }
+  });
+
+
+
+
 
   console.log('Total income and expenses:', JSON.stringify(result, null, 2));
   return result;
@@ -680,14 +712,36 @@ function getStartAndEndDatesOfMonth(dateString) {
   return [formatDate(startOfMonth),formatDate(endOfMonth)];
 }
 
+function getCadenceMonthlyMultiplier(cadence) {
+  switch (cadence) {
+    case 'monthly':
+      return 1;
+    case 'twice a month':
+      return 2;
+    case 'once a week':
+      return 52 / 12;
+    case 'every 2 weeks':
+      return 26 / 12;  
+    case 'every 3 months':
+      return 1 / 3;
+    case 'every 4 months':
+      return 1 / 4;
+    case 'twice a year':
+      return 1 / 6;
+    case 'yearly':
+      return 1 / 12;
+    default:
+      return 1000;
+  }
+}
 
 
 async function testReport() {
   try {
     console.log("Starting test report...");
     const apiKey = getConfigValue('API_Key');
-    const startDate = '2023-01-02';
-    const endDate = '2023-04-30';
+    const startDate = '2023-01-01';
+    const endDate = '2023-01-31';
 
     // Get total income and expenses
     console.log("Getting total income and expenses...");
