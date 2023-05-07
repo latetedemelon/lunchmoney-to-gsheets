@@ -509,23 +509,8 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
 
   const excludedCategories = [239188, 127507, 239190, 126309, 211808, 210116, 127500, 138568, 127506];
 
-  startDate = new Date(startDate);
-  endDate = new Date(endDate);
-
-  startDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-  endDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
-
-  const monthsInRange = [];
-
-  for (
-    let currentDate = new Date(startDate);
-    currentDate <= endDate;
-    currentDate.setMonth(currentDate.getMonth() + 1)
-  ) {
-    if (currentDate <= endDate) {
-      monthsInRange.push(`${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-01`);
-    }
-  }
+  const monthsInRange = getMonthsInRange(startDate, endDate);
+  console.log(monthsInRange);
 
   budgets.forEach(budget => {
     const budgetData = budget.data;
@@ -562,89 +547,117 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
 
 
 async function getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate) {
-  console.log('Fetching budgets...');
-  const budgets = await fetchBudgets(apiKey, startDate, endDate);
-  console.log('Fetching transactions...');
-  const transactions = await fetchTransactions(apiKey, startDate, endDate);
+  const[startDateSom, startDateEom] = getStartAndEndDatesOfMonth(startDate);
+  const[endDateSom, endDateEom] = getStartAndEndDatesOfMonth(endDate);
 
-  const includedCategory = 126299;
+  const budgets = await fetchBudgets(apiKey, startDateSom, endDateEom);
+  const transactions = await fetchTransactions(apiKey, startDateSom, endDateEom);
+  const monthsInRange = getMonthsInRange(startDateSom, endDateEom);
 
-  startDate = new Date(startDate);
-  endDate = new Date(endDate);
+  console.log(monthsInRange);
 
-  startDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-  endDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+  const result = {};
 
-  const monthsInRange = [];
-
-  for (
-    let currentDate = new Date(startDate);
-    currentDate.setMonth(currentDate.getMonth() + 1);
-  ) {
-    if (currentDate <= endDate) {
-      monthsInRange.push(`${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-01`);
-    }
-  }
-
-  console.log('Months in range:', monthsInRange);
-
-  const categoriesData = {};
-
-  console.log('Processing budgets...');
   budgets.forEach(budget => {
     const budgetData = budget.data;
 
-    if (budget.is_group !== true && budget.category_id === includedCategory) {
-      console.log(`Processing budget for category ${budget.category_name} (${budget.category_id})`);
-
-      categoriesData[budget.category_id] = {
-        category_name: budget.category_name,
-        budget: 0,
-        spend: 0,
-        transactions: 0,
+    if (budget.category_id === 126299 && budget.is_group !== true) {
+      result[budget.category_name] = {
+        transactions: {},
       };
 
       for (const date in budgetData) {
         if (monthsInRange.includes(date)) {
-          categoriesData[budget.category_id].budget += parseFloat(budgetData[date].budget_to_base || 0);
-          categoriesData[budget.category_id].spend += parseFloat(budgetData[date].spending_to_base || 0);
+          if (!result[budget.category_name][date]) {
+            result[budget.category_name][date] = {
+              budget: 0,
+              spend: 0,
+              transactions: {},
+            };
+          }
+          result[budget.category_name][date].budget += parseFloat(budgetData[date].budget_to_base);
+          result[budget.category_name][date].spend += parseFloat(budgetData[date].spending_to_base);
         }
       }
-      console.log(`Budget and spend for category ${budget.category_name}:`, categoriesData[budget.category_id]);
     }
   });
 
-  console.log('Processing transactions...');
   transactions.forEach(transaction => {
-    const transactionDate = new Date(transaction.date);
-    if (
-      transactionDate >= startDate &&
-      transactionDate <= endDate &&
-      transaction.category_id &&
-      transaction.is_group !== true &&
-      transaction.category_id === includedCategory
-    ) {
-      //console.log(`Processing transaction for category ${transaction.category_id}`);
+    const transactionDate = transaction.date;
 
-      if (categoriesData[transaction.category_id]) {
-        categoriesData[transaction.category_id].transactions += transaction.to_base;
-      } else {
-        categoriesData[transaction.category_id] = {
-          category_name: 'Unknown',
-          budget: 0,
-          spend: 0,
-          transactions: transaction.to_base,
-        };
+    if (transaction.category_id === 126299 && transactionDate >= startDateSom && transactionDate <= endDateEom) {
+      const categoryName = budgets.find(budget => budget.category_id === transaction.category_id).category_name;
+      const payee = transaction.payee;
+
+      // Get the transaction month (yyyy-mm format)
+      const [year, month] = transactionDate.split("-");
+      const transactionMonth = `${year}-${month}-01`;
+
+      if (result[categoryName] && result[categoryName][transactionMonth]) {
+        if (!result[categoryName][transactionMonth].transactions[payee]) {
+          result[categoryName][transactionMonth].transactions[payee] = 0;
+        }
+        result[categoryName][transactionMonth].transactions[payee] += parseFloat(transaction.amount);
       }
     }
   });
 
-  console.log('Final categories data:', categoriesData);
-  return categoriesData;
+  console.log('Category data:', JSON.stringify(result, null, 2));
+  return result;
 }
 
 
 
+function getMonthsInRange(startDate, endDate) {
+  const monthsInRange = [];
+  console.log(startDate, endDate);
+  const parseDate = (dateString) => {
+    const [year, month, day] = dateString.split("-");
+    return new Date(year, month - 1, day);
+  };
+
+  const startDateFom = parseDate(startDate);
+  const endDateFom = parseDate(endDate);
+
+  while (startDateFom <= endDateFom) {
+    monthsInRange.push(
+      `${startDateFom.getFullYear()}-${(startDateFom.getMonth() + 1)
+        .toString()
+        .padStart(2, "0")}-01`
+    );
+
+    if (startDateFom.getMonth() === 11) {
+      startDateFom.setFullYear(startDateFom.getFullYear() + 1);
+      startDateFom.setMonth(0);
+    } else {
+      startDateFom.setMonth(startDateFom.getMonth() + 1);
+    }
+  }
+
+  return monthsInRange;
+}
+
+
+function getStartAndEndDatesOfMonth(dateString) {
+  const parseDate = (dateString) => {
+    const [year, month, day] = dateString.split("-");
+    return new Date(year, month - 1, day);
+  };
+
+  const formatDate = (date) => {
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, "0");
+    const day = date.getDate().toString().padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const inputDate = parseDate(dateString);
+
+  const startOfMonth = new Date(inputDate.getFullYear(), inputDate.getMonth(), 1);
+  const endOfMonth = new Date(inputDate.getFullYear(), inputDate.getMonth() + 1, 0);
+
+  return [formatDate(startOfMonth),formatDate(endOfMonth)];
+}
 
 
 
@@ -652,7 +665,7 @@ async function testReport() {
   try {
     console.log("Starting test report...");
     const apiKey = getConfigValue('API_Key');
-    const startDate = '2023-01-01';
+    const startDate = '2023-01-02';
     const endDate = '2023-04-30';
 
     // Get total income and expenses
@@ -661,14 +674,18 @@ async function testReport() {
     console.log("Total income and expenses retrieved successfully:", incomeAndExpenses);
 
     // Get total budget and spend
-    console.log("Getting total budget and spend...");
-    const budgetAndSpend = await getTotalBudgetAndSpend(apiKey, startDate, endDate);
-    console.log("Total budget and spend retrieved successfully:", budgetAndSpend);
+    //console.log("Getting total budget and spend...");
+    //const budgetAndSpend = await getTotalBudgetAndSpend(apiKey, startDate, endDate);
+    //console.log("Total budget and spend retrieved successfully:", budgetAndSpend);
 
     // Get budget and spend by category
     console.log("Getting budget and spend by category...");
     const budgetAndSpendByCategory = await getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate);
-    console.log("Budget and spend by category retrieved successfully:", budgetAndSpendByCategory);
+    console.log("Budget and spend by category retrieved successfully:", JSON.stringify(budgetAndSpendByCategory, null, 2));
+
+    //const dateString = "2023-02-15";
+    //const result = getStartAndEndDatesOfMonth(dateString);
+    //console.log(result); // {start: "2023-02-01", end: "2023-02-28"}
 
     // Get planned and actual spend
     //console.log("Getting planned and actual spend...");
