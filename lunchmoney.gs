@@ -514,11 +514,13 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
       totalBudget: 0,
       totalSpend: 0,
       totalTransactions: 0,
+      totalRecurringTransactions: 0,
     },
     expenses: {
       totalBudget: 0,
       totalSpend: 0,
       totalTransactions: 0,
+      totalRecurringTransactions: 0,
     },
   };
 
@@ -548,9 +550,15 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
 
       if (category && category.is_group !== true && category.exclude_from_budget !== true) {
         if (category.is_income) {
-          result.income.totalTransactions += parseFloat(transaction.amount);
+         result.income.totalTransactions += parseFloat(transaction.amount);
+          if (transaction.recurring_id) {
+            result.income.totalRecurringTransactions += parseFloat(transaction.amount);
+          }
         } else {
           result.expenses.totalTransactions += parseFloat(transaction.amount);
+          if (transaction.recurring_id) {
+            result.expenses.totalRecurringTransactions += parseFloat(transaction.amount);
+          }
         }
       }
     }
