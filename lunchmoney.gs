@@ -499,7 +499,7 @@ async function getTotalIncomeAndExpenses(apiKey, startDate, endDate) {
 
 
 
-async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
+async function getTotals(apiKey, startDate, endDate) {
   const [startDateSom, startDateEom] = getStartAndEndDatesOfMonth(startDate);
   const [endDateSom, endDateEom] = getStartAndEndDatesOfMonth(endDate);
 
@@ -582,7 +582,6 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
       const cadence = recurringTransaction.cadence;
       const monthlyMultiplier = getCadenceMonthlyMultiplier(cadence);
       const monthlyAmount = amount * monthlyMultiplier;
-      console.log(monthlyAmount);
 
       if (budget.is_income) {
         result.income.totalExpectedRecurring += monthlyAmount;
@@ -600,7 +599,78 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
   return result;
 }
 
+async function getTotalsForCategories(apiKey, startDate, endDate) {
+  const [startDateSom, startDateEom] = getStartAndEndDatesOfMonth(startDate);
+  const [endDateSom, endDateEom] = getStartAndEndDatesOfMonth(endDate);
 
+  const budgets = await fetchBudgets(apiKey, startDateSom, endDateEom);
+  const transactions = await fetchTransactions(apiKey, startDateSom, endDateEom);
+  const monthsInRange = getMonthsInRange(startDateSom, endDateEom);
+
+  const recurringTransactions = [];
+  for (const date of monthsInRange) {
+    const expensesForMonth = await recurringexpenses(apiKey, date);
+    if (expensesForMonth) {
+      recurringTransactions.push(...expensesForMonth);
+    }
+  }
+
+  const result = {};
+
+  budgets.forEach(budget => {
+    const budgetData = budget.data;
+
+    if (budget.is_group !== true && budget.exclude_from_budget !== true) {
+      if (!result[budget.category_name]) {
+        result[budget.category_name] = {
+          totalBudget: 0,
+          totalSpend: 0,
+          totalTransactions: 0,
+          totalExpectedRecurring: 0,
+          totalRecurring: 0,
+        };
+      }
+
+      for (const date in budgetData) {
+        if (monthsInRange.includes(date)) {
+          result[budget.category_name].totalBudget += parseFloat(budgetData[date].budget_to_base || 0);
+          result[budget.category_name].totalSpend += parseFloat(budgetData[date].spending_to_base || 0);
+        }
+      }
+
+      recurringTransactions.forEach(recurringTransaction => {
+        if (budget.category_id === recurringTransaction.category_id) {
+          const amount = parseFloat(recurringTransaction.amount);
+          const cadence = recurringTransaction.cadence;
+          const monthlyMultiplier = getCadenceMonthlyMultiplier(cadence);
+          const monthlyAmount = amount * monthlyMultiplier;
+          result[budget.category_name].totalExpectedRecurring += parseFloat(monthlyAmount);
+        }
+      });
+    }
+  });
+
+  transactions.forEach(transaction => {
+    const transactionDate = new Date(transaction.date);
+
+    if (transactionDate >= new Date(startDate) && transactionDate <= new Date(endDate)) {
+      const category = budgets.find(budget => budget.category_id === transaction.category_id);
+
+      if (category && result[category.category_name]) {
+        result[category.category_name].totalTransactions += parseFloat(transaction.amount);
+      }
+    }
+  });
+
+  recurringTransactions.forEach(recurringTransaction => {
+    const category = budgets.find(budget => budget.category_id === recurringTransaction.category_id);
+
+    if (category && result[category.category_name]) {
+      result[category.category_name].totalRecurring += parseFloat(recurringTransaction.amount);
+    }
+  });
+  return result;
+}
 
 async function getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate) {
   const [startDateSom, startDateEom] = getStartAndEndDatesOfMonth(startDate);
@@ -650,8 +720,6 @@ async function getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDat
       }
     }
   });
-
-  console.log('Category data:', JSON.stringify(result, null, 2));
   return result;
 }
 
@@ -750,13 +818,13 @@ async function testReport() {
 
     // Get total budget and spend
     console.log("Getting total budget and spend...");
-    const budgetAndSpend = await getTotalBudgetAndSpend(apiKey, startDate, endDate);
+    const budgetAndSpend = await getTotals(apiKey, startDate, endDate);
     console.log("Total budget and spend retrieved successfully:", budgetAndSpend);
 
     // Get budget and spend by category
-    ///console.log("Getting budget and spend by category...");
-    //const budgetAndSpendByCategory = await getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate);
-    //console.log("Budget and spend by category retrieved successfully:", JSON.stringify(budgetAndSpendByCategory, null, 2));
+    console.log("Getting budget and spend by category...");
+    const budgetAndSpendByCategory = await getTotalsForCategories(apiKey, startDate, endDate);
+    console.log("Budget and spend by category retrieved successfully:", JSON.stringify(budgetAndSpendByCategory, null, 2));
 
     //const dateString = "2023-02-15";
     //const result = getStartAndEndDatesOfMonth(dateString);
