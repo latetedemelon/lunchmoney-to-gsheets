@@ -500,26 +500,41 @@ async function getTotalIncomeAndExpenses(apiKey, startDate, endDate) {
 
 
 async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
-  const budgets = await fetchBudgets(apiKey, startDate, endDate);
-  const transactions = await fetchTransactions(apiKey, startDate, endDate);
+  const [startDateSom, startDateEom] = getStartAndEndDatesOfMonth(startDate);
+  const [endDateSom, endDateEom] = getStartAndEndDatesOfMonth(endDate);
 
-  let totalBudget = 0;
-  let totalSpend = 0;
-  let totalTransactionSpend = 0;
+  const budgets = await fetchBudgets(apiKey, startDateSom, endDateEom);
+  const transactions = await fetchTransactions(apiKey, startDateSom, endDateEom);
+  const monthsInRange = getMonthsInRange(startDateSom, endDateEom);
 
-  const excludedCategories = [239188, 127507, 239190, 126309, 211808, 210116, 127500, 138568, 127506];
-
-  const monthsInRange = getMonthsInRange(startDate, endDate);
   console.log(monthsInRange);
+
+  const result = {
+    income: {
+      totalBudget: 0,
+      totalSpend: 0,
+      totalTransactions: 0,
+    },
+    expenses: {
+      totalBudget: 0,
+      totalSpend: 0,
+      totalTransactions: 0,
+    },
+  };
 
   budgets.forEach(budget => {
     const budgetData = budget.data;
 
-    if (budget.is_group !== true && !excludedCategories.includes(budget.category_id)) {
+    if (budget.is_group !== true && budget.exclude_from_budget !== true) {
       for (const date in budgetData) {
         if (monthsInRange.includes(date)) {
-          totalBudget += parseFloat(budgetData[date].budget_to_base || 0);
-          totalSpend += parseFloat(budgetData[date].spending_to_base || 0);
+          if (budget.is_income) {
+            result.income.totalBudget += parseFloat(budgetData[date].budget_to_base || 0);
+            result.income.totalSpend += parseFloat(budgetData[date].spending_to_base || 0);
+          } else {
+            result.expenses.totalBudget += parseFloat(budgetData[date].budget_to_base || 0);
+            result.expenses.totalSpend += parseFloat(budgetData[date].spending_to_base || 0);
+          }
         }
       }
     }
@@ -527,28 +542,29 @@ async function getTotalBudgetAndSpend(apiKey, startDate, endDate) {
 
   transactions.forEach(transaction => {
     const transactionDate = new Date(transaction.date);
-    if (
-      transactionDate >= startDate &&
-      transactionDate <= endDate &&
-      transaction.category_id &&
-      transaction.is_group !== true &&
-      !excludedCategories.includes(transaction.category_id)
-    ) {
-      totalTransactionSpend += transaction.to_base;
+
+    if (transactionDate >= new Date(startDate) && transactionDate <= new Date(endDate)) {
+      const category = budgets.find(budget => budget.category_id === transaction.category_id);
+
+      if (category && category.is_group !== true && category.exclude_from_budget !== true) {
+        if (category.is_income) {
+          result.income.totalTransactions += parseFloat(transaction.amount);
+        } else {
+          result.expenses.totalTransactions += parseFloat(transaction.amount);
+        }
+      }
     }
   });
 
-  return {
-    total_budget: totalBudget.toFixed(2),
-    total_spend: totalSpend.toFixed(2),
-    total_transaction_spend: totalTransactionSpend.toFixed(2),
-  };
+  console.log('Total income and expenses:', JSON.stringify(result, null, 2));
+  return result;
 }
 
 
+
 async function getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate) {
-  const[startDateSom, startDateEom] = getStartAndEndDatesOfMonth(startDate);
-  const[endDateSom, endDateEom] = getStartAndEndDatesOfMonth(endDate);
+  const [startDateSom, startDateEom] = getStartAndEndDatesOfMonth(startDate);
+  const [endDateSom, endDateEom] = getStartAndEndDatesOfMonth(endDate);
 
   const budgets = await fetchBudgets(apiKey, startDateSom, endDateEom);
   const transactions = await fetchTransactions(apiKey, startDateSom, endDateEom);
@@ -561,43 +577,36 @@ async function getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDat
   budgets.forEach(budget => {
     const budgetData = budget.data;
 
-    if (budget.category_id === 126299 && budget.is_group !== true) {
-      result[budget.category_name] = {
-        transactions: {},
-      };
+    if (budget.is_group !== true) {
+      if (!result[budget.category_name]) {
+        result[budget.category_name] = {
+          budget: 0,
+          spend: 0,
+          transactions: 0,
+        };
+      }
 
       for (const date in budgetData) {
         if (monthsInRange.includes(date)) {
-          if (!result[budget.category_name][date]) {
-            result[budget.category_name][date] = {
-              budget: 0,
-              spend: 0,
-              transactions: {},
-            };
-          }
-          result[budget.category_name][date].budget += parseFloat(budgetData[date].budget_to_base);
-          result[budget.category_name][date].spend += parseFloat(budgetData[date].spending_to_base);
+          result[budget.category_name].budget += parseFloat(budgetData[date].budget_to_base | 0);
+          result[budget.category_name].spend += parseFloat(budgetData[date].spending_to_base | 0);
         }
       }
     }
   });
 
   transactions.forEach(transaction => {
-    const transactionDate = transaction.date;
+    const transactionDate = new Date(transaction.date);
 
-    if (transaction.category_id === 126299 && transactionDate >= startDateSom && transactionDate <= endDateEom) {
-      const categoryName = budgets.find(budget => budget.category_id === transaction.category_id).category_name;
-      const payee = transaction.payee;
+    if (transactionDate >= new Date(startDate) && transactionDate <= new Date(endDate)) {
+      const category = budgets.find(budget => budget.category_id === transaction.category_id);
 
-      // Get the transaction month (yyyy-mm format)
-      const [year, month] = transactionDate.split("-");
-      const transactionMonth = `${year}-${month}-01`;
-
-      if (result[categoryName] && result[categoryName][transactionMonth]) {
-        if (!result[categoryName][transactionMonth].transactions[payee]) {
-          result[categoryName][transactionMonth].transactions[payee] = 0;
+      if (category && category.is_group !== true && category.exclude_from_budget !== true) {
+        if (category.is_income) {
+          result.income.totalTransactions += parseFloat(transaction.amount);
+        } else {
+          result.expenses.totalTransactions += parseFloat(transaction.amount);
         }
-        result[categoryName][transactionMonth].transactions[payee] += parseFloat(transaction.amount);
       }
     }
   });
@@ -605,6 +614,10 @@ async function getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDat
   console.log('Category data:', JSON.stringify(result, null, 2));
   return result;
 }
+
+
+
+
 
 
 
@@ -674,14 +687,14 @@ async function testReport() {
     console.log("Total income and expenses retrieved successfully:", incomeAndExpenses);
 
     // Get total budget and spend
-    //console.log("Getting total budget and spend...");
-    //const budgetAndSpend = await getTotalBudgetAndSpend(apiKey, startDate, endDate);
-    //console.log("Total budget and spend retrieved successfully:", budgetAndSpend);
+    console.log("Getting total budget and spend...");
+    const budgetAndSpend = await getTotalBudgetAndSpend(apiKey, startDate, endDate);
+    console.log("Total budget and spend retrieved successfully:", budgetAndSpend);
 
     // Get budget and spend by category
-    console.log("Getting budget and spend by category...");
-    const budgetAndSpendByCategory = await getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate);
-    console.log("Budget and spend by category retrieved successfully:", JSON.stringify(budgetAndSpendByCategory, null, 2));
+    ///console.log("Getting budget and spend by category...");
+    //const budgetAndSpendByCategory = await getBudgetSpendAndTransactionsByCategory(apiKey, startDate, endDate);
+    //console.log("Budget and spend by category retrieved successfully:", JSON.stringify(budgetAndSpendByCategory, null, 2));
 
     //const dateString = "2023-02-15";
     //const result = getStartAndEndDatesOfMonth(dateString);
